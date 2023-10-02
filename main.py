@@ -16,7 +16,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from requests.auth import HTTPBasicAuth
 
 # импортируем настройки email оправителя / получателя отчётов:
-from Text.const_email import (
+from Email_config.const_email import (
     EMAIL_LOGIN,
     EMAIL_NAME_TO,
     EMAIL_PASSWORD_OUT_APPLICATIONS,
@@ -43,7 +43,7 @@ def get_file_name() -> str:
     # {WindowsPath} C:\Users\user\PycharmProjects\Lesson_01
     project_directory = Path(__file__).resolve(strict=True).parent
 
-    # str "C:\\Users\\user\\PycharmProjects\\Lesson_01\\Text\\set_queue.ini"
+    # str "C:\\Users\\user\\PycharmProjects\\Lesson_01\\Email_config\\set_queue.ini"
     file_name_queue_set_ini = str(project_directory / INI_QUEUE_FILE_NAME)
 
     return file_name_queue_set_ini
