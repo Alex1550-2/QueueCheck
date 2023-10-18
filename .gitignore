@@ -1,2 +1,3 @@
-# Игнорировать все файлы в каталога Email_config/
 Email_config/
+Logs/
+Report/
