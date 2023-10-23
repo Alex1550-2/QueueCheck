@@ -15,15 +15,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # импортируем настройки email оправителя / получателя отчётов:
 from Email_config.const_email import (
     EMAIL_LOGIN,
-    EMAIL_NAME_ALARM_1,
     EMAIL_NAME_TO,
     EMAIL_PASSWORD_OUT_APPLICATIONS,
     INI_QUEUE_FILE_NAME,
     QUEUE_AMOUNT,
-    QUEUE_EMAIL_ALARM,
     SMTP_EMAIL_SERVER,
+    email_name_alarm_list,
 )
-from logs import create_file_name, remove_report_files, save_json_file, step_logging
+from logs import clean_log_file, step_logging
 from mapping import queue_mapping  # импортируем обработку запросов
 
 
@@ -101,75 +100,80 @@ def queue_check():
         queue_settings: tuple = read_ini(file_name_set_ini, queue_number)
 
         # 2) запустили проверку i-ой инфраструктуры:
-        (
-            email_topic,
-            email_to_json_nodes,
-            email_to_json_queues,
-            email_alarm_list,
-        ) = queue_mapping(queue_settings)
+        email_topic, email_tech_text, email_alarm_text = queue_mapping(queue_settings)
 
         # 3) заполняем тему письма
         message_topic: str = (
             datetime.now().strftime("%Y_%m_%d_%H_%M_%S") + ": " + email_topic
         )
 
-        # 4) сохранить 'сырой' json в папке Report
-        log_file_name = create_file_name("_nodes")
-        save_json_file(email_to_json_nodes, log_file_name)
-
-        log_file_name = create_file_name("_queues")
-        save_json_file(email_to_json_queues, log_file_name)
-
-        # записываем в лог отчётную строку:
-        step_logging(message_topic + ": лог сохранён в папке Report")
-        time.sleep(1)
-
-        # 5) отправляем 'технический' email с результатами:
-        general_big_string = ""
-        for element in email_alarm_list:
-            general_big_string += str(element) + "\r\n"
+        # 4) отправляем 'технический' email с результатами:
+        tech_text_big_string = ""
+        for element in email_tech_text:
+            tech_text_big_string += str(element) + "\r\n"
 
         send_email(
             SMTP_EMAIL_SERVER,
             EMAIL_LOGIN,
             EMAIL_PASSWORD_OUT_APPLICATIONS,
             EMAIL_NAME_TO,
-            general_big_string,
+            tech_text_big_string,
             message_topic,
         )
+
         # записываем в лог отчётную строку:
-        step_logging(message_topic + ": 'технический' email отправлен")
+        step_logging(
+            EMAIL_NAME_TO
+            + " >>> "
+            + message_topic
+            + " >>> 'технический' email отправлен"
+        )
 
-        # 6) если в тексте есть 'Alarm', то отправляем 'тревожные' email
+        # 5) отправляем 'тревожные' email
+        # проверяем текстовку на наличие слова "ALARM!":
         checklist = {"ALARM!"}
+        common_words = set(tech_text_big_string.split()) & checklist
 
-        common_words = set(general_big_string.split()) & checklist
-        if len(common_words) > 0:
+        # и тему email на наличие слова "ERROR":
+        if len(common_words) > 0 or message_topic.find("ERROR") != -1:
+            # создаём укороченный 'тревожный' email:
+            alarm_text_big_string = ""
+            for element in email_alarm_text:
+                alarm_text_big_string += str(element) + "\r\n"
+
             alarm_number = 0  # счётчик цикла: кол-во отправляемых email
+            email_alarm_amount = len(email_name_alarm_list)
 
-            while alarm_number < QUEUE_EMAIL_ALARM:
+            while alarm_number < email_alarm_amount:
+
                 send_email(
                     SMTP_EMAIL_SERVER,
                     EMAIL_LOGIN,
                     EMAIL_PASSWORD_OUT_APPLICATIONS,
-                    EMAIL_NAME_ALARM_1,
-                    general_big_string,
+                    email_name_alarm_list[alarm_number],
+                    alarm_text_big_string,
                     message_topic,
                 )
                 # записываем в лог отчётную строку:
-                step_logging(message_topic + ": 'тревожный' email отправлен")
+                step_logging(
+                    email_name_alarm_list[alarm_number]
+                    + " >>> "
+                    + message_topic
+                    + " >>> 'тревожный' email отправлен"
+                )
 
                 # задержка, чтобы не забанил почтовый сервер:
-                time.sleep(1)
+                time.sleep(3)
 
                 alarm_number += 1
 
         queue_number += 1
 
         # задержка, чтобы не забанил почтовый сервер:
-        time.sleep(1)
+        time.sleep(3)
 
-    print("for test: cycle complete")
+    # только для тестирования:
+    # print("for test: cycle complete")
 
 
 def run_scheduler():
@@ -180,11 +184,11 @@ def run_scheduler():
     # jitter - "дребезг" 30 секунд
     scheduler.add_job(queue_check, "cron", day_of_week="0-4", hour="09-18/1", jitter=30)
 
-    # ежедневно в 23.30 часа удалить "лишние" файлы из папки Report:
-    scheduler.add_job(remove_report_files, "cron", hour="23", minute="30", jitter=15)
+    # ежедневно в 23.30 часа удалить "лишние" строки из лога:
+    scheduler.add_job(clean_log_file, "cron", hour="23", minute="30", jitter=15)
 
     # только для тестирования:
-    # scheduler.add_job(queue_check, trigger='interval', seconds=30)
+    # scheduler.add_job(queue_check, trigger='interval', seconds=15)
 
     scheduler.start()
 

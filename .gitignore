@@ -1,3 +1,2 @@
 Email_config/
-Logs/
-Report/
+Logs/*.txt

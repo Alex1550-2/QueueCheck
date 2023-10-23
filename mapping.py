@@ -1,41 +1,22 @@
 """Функции общения с API RabbitMQ
-запросы и обработка ответов на них
-а также отправки email"""
+запросы и обработка ответов на них"""
 import json
 
 import requests
 from requests.auth import HTTPBasicAuth
 
-queue_control_values = (
-    0.2,  # [0] memory free, ratio
-    50,  # [1] free disk space, GB
+from check_value import (
+    byte_change_gib,
+    byte_change_mebibyte,
+    calculate_amount_messages,
+    calculate_diskspace_free,
+    calculate_memory_free,
+    get_check_value,
+    replace_symbol,
 )
 
-# мониторинг корректности работы системы по числу сообщений в очереди
-# https://cf-dcto.grfc.ru/pages/viewpage.action?pageId=158630351
-limit_value_messages = {
-    "analyse_new_materials": 100000,
-    "analyse_result": 100000,
-    "bulk_add_to_sample": 1000,
-    "reanalyse_sample": 1000,
-    "worker_re_in_other": 5000,
-    "worker_re_in_smi": 300000,
-    "worker_re_in_sn": 300000,
-    "worker_re_out": 250000,
-    "REST": 300000,
-}
-
-
-def get_check_value(dict_name, dict_kay: str) -> int:
-    """получаем количественный показатель для оценки
-    корректности работы очереди
-    limit_value - количество сообщений (queue message total)"""
-    limit_value: int = 300000  # значение по умолчанию
-
-    if dict_kay in dict_name:
-        limit_value = int(dict_name[dict_kay])
-
-    return limit_value
+# импортируем количественные значения проверки работоспособности:
+from Email_config.control_value import limit_value_messages, queue_control_values
 
 
 def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
@@ -53,56 +34,29 @@ def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
 
     auth = HTTPBasicAuth(user_name, user_password)
     url_requests = "http://" + server_ip + ":" + server_port + command
-    res = requests.get(url_requests, auth=auth)
 
-    if res.status_code == 200:
-        content = res.json()
-        return content
-
-    return {"response": "error"}
-
-
-def byte_change_gib(byte: str) -> str:
-    """функция преобразования Байт в Гибибайт (GiB)"""
-    gib: int = round(int(byte) / (1024**3), 2)
-    return str(gib)
-
-
-def byte_change_mebibyte(byte: str) -> str:
-    """функция преобразования Байт в Мебибайт (MiB)"""
-    mib: int = round(int(byte) / (1024**2), 2)
-    return str(mib)
-
-
-def calculate_memory_free(used_memory: str, total_memory: str, limit_ratio: float):
-    """функция рассчитывает % свободной памяти и
-    сравнивает его с пороговым значением ratio"""
-    current_ratio = int(
-        (float(total_memory) - float(used_memory)) / float(total_memory) * 100
-    )
-
-    if current_ratio > limit_ratio:
-        check_result = "OK"
-    else:
-        check_result = "ALARM!"
-
-    return current_ratio, check_result
-
-
-def calculate_diskspace_free(free_diskspace: str, limit_diskspace: int) -> str:
-    """функция сравнивает свободный объём диска и
-    пороговое значение limit"""
-    if float(free_diskspace) > float(limit_diskspace):
-        return "OK"
-    return "ALARM!"
-
-
-def calculate_amount_messages(message_amount: int, limit_message_amount: int) -> str:
-    """функция сравнивает текущее количество message
-    в очереди и пороговое значение limit"""
-    if message_amount < limit_message_amount:
-        return "OK"
-    return "ALARM!"
+    try:
+        # время ожидания ответа от сервера timeout=15 секунд
+        res = requests.get(url_requests, auth=auth, timeout=15)
+        if res.status_code == 200:
+            content = res.json()
+            return content
+        return {"name": "error", "status_code": str(res.status_code)}
+    except requests.ConnectionError as error_text:
+        return {
+            "name": "connect_error",
+            "status_code": "Ошибка подключения: " + str(error_text),
+        }
+    except requests.Timeout as error_text:
+        return {
+            "name": "connect_error",
+            "status_code": "Ошибка тайм-аута: " + str(error_text),
+        }
+    except requests.RequestException as error_text:
+        return {
+            "name": "connect_error",
+            "status_code": "Ошибка запроса: " + str(error_text),
+        }
 
 
 def responce_mapping_nodes(responce: json) -> json:
@@ -116,7 +70,7 @@ def responce_mapping_nodes(responce: json) -> json:
             {
                 "nodes_"
                 + str(num + 1): {
-                    "name": responce[num]["name"],
+                    "name": replace_symbol(responce[num]["name"]),
                     "file descriptors": responce[num]["fd_used"],
                     "file descriptors available": responce[num]["fd_total"],
                     "socket descriptors": responce[num]["sockets_used"],
@@ -142,51 +96,57 @@ def responce_mapping_nodes(responce: json) -> json:
     return json.dumps(dict_responce, indent=3)
 
 
-def alarm_mapping_nodes(responce: json) -> list:
+def check_mapping_nodes(responce: json) -> list:
     """проверяем узлы по количественным характеристикам
-    из списка limit_value_messages"""
-    check_list: list = ["NODES:"]
-    check_list.append("")  # разделитель
+    из списка limit_value_messages
+    на выходе текстовка для email в части 'УЗЛЫ'"""
+    nodes_list: list = ["NODES:"]
+    nodes_list.append("")  # разделитель
     num = 0
 
     while num < len(responce):  # 3, по кол-ву узлов
         # формируем отчётный list:
-        check_list.append(responce[num]["name"])
+        nodes_list.append(replace_symbol(responce[num]["name"]))
 
-        memory_percent, memory_result = calculate_memory_free(
-            byte_change_gib(responce[num]["mem_used"]),
-            byte_change_gib(responce[num]["mem_limit"]),
-            queue_control_values[0],
-        )
+        # проверка "Node not running"
+        if responce[num]["running"] is False:
+            nodes_list.append("Node not running >>> ERROR!")
 
-        check_list.append(
-            "used "
-            + byte_change_gib(responce[num]["mem_used"])
-            + " GiB / total "
-            + byte_change_gib(responce[num]["mem_limit"])
-            + " GiB >>> "
-            + str(memory_percent)
-            + "% free >>> Test: "
-            + memory_result
-        )
+        else:
+            memory_percent, memory_result = calculate_memory_free(
+                byte_change_gib(responce[num]["mem_used"]),
+                byte_change_gib(responce[num]["mem_limit"]),
+                queue_control_values[0],
+            )
 
-        check_result = calculate_diskspace_free(
-            byte_change_gib(responce[num]["disk_free"]), queue_control_values[1]
-        )
+            nodes_list.append(
+                "used "
+                + byte_change_gib(responce[num]["mem_used"])
+                + " GiB / total "
+                + byte_change_gib(responce[num]["mem_limit"])
+                + " GiB >>> "
+                + str(memory_percent)
+                + "% free >>> Test: "
+                + memory_result
+            )
 
-        check_list.append(
-            "disk space "
-            + byte_change_gib(responce[num]["disk_free"])
-            + " GiB / check limit "
-            + str(queue_control_values[1])
-            + " GiB >>> Test: "
-            + check_result
-        )
+            check_result = calculate_diskspace_free(
+                byte_change_gib(responce[num]["disk_free"]), queue_control_values[1]
+            )
 
-        check_list.append("")  # разделитель
+            nodes_list.append(
+                "disk space "
+                + byte_change_gib(responce[num]["disk_free"])
+                + " GiB / check limit "
+                + str(queue_control_values[1])
+                + " GiB >>> Test: "
+                + check_result
+            )
+
+            nodes_list.append("")  # разделитель
 
         num += 1
-    return check_list
+    return nodes_list
 
 
 def responce_mapping_queues(responce: json) -> json:
@@ -216,21 +176,19 @@ def responce_mapping_queues(responce: json) -> json:
     return json.dumps(dict_responce, indent=3)
 
 
-def alarm_mapping_queues_add(check_list: list, responce: json) -> list:
-    """добавляем проверку очередей по текущему количеству сообщений"""
-    check_list.append("===============================")
-    check_list.append("QUEUES:")
-    check_list.append("")  # разделитель
-
+def check_mapping_queues(responce: json) -> list:
+    """добавляем результат проверки очередей по текущему количеству сообщений
+    на выходе текстовка email для 'технического' отчёта в части 'ОЧЕРЕДИ'"""
+    tech_list: list = ["===============================", "QUEUES:", ""]
     num = 0
 
-    while num < len(responce):  # 3, по кол-ву узлов
+    while num < len(responce):  # 108, по кол-ву очередей
         # определяем пороговое значение:
         limit_value = get_check_value(limit_value_messages, responce[num]["name"])
         check_result = calculate_amount_messages(responce[num]["messages"], limit_value)
 
         # формируем отчётный list:
-        check_list.append(
+        tech_list.append(
             responce[num]["vhost"]
             + ": "
             + responce[num]["name"]
@@ -246,7 +204,41 @@ def alarm_mapping_queues_add(check_list: list, responce: json) -> list:
             + check_result
         )
         num += 1
-    return check_list
+    return tech_list
+
+
+def alarm_mapping_queues(responce: json) -> list:
+    """добавляем результат проверки очередей по текущему количеству сообщений
+    на выходе текстовка email для 'тревожного' отчёта
+    включаем в отчёт только очереди с ALARM"""
+    alarm_list: list = ["===============================", "QUEUES:", ""]
+    num = 0
+
+    while num < len(responce):  # 108, по кол-ву очередей
+        # определяем пороговое значение:
+        limit_value = get_check_value(limit_value_messages, responce[num]["name"])
+        check_result = calculate_amount_messages(responce[num]["messages"], limit_value)
+
+        # в отчёт добавляем только 'тревожную' строку:
+        if check_result == "ALARM!":
+            # формируем отчётный list:
+            alarm_list.append(
+                responce[num]["vhost"]
+                + ": "
+                + responce[num]["name"]
+                + " >>> messages: ready "
+                + str(responce[num]["messages_ready"])
+                + " / unacked "
+                + str(responce[num]["messages_unacknowledged"])
+                + " / total "
+                + str(responce[num]["messages"])
+                + " >>> check limit "
+                + str(limit_value)
+                + " >>> Test: "
+                + check_result
+            )
+        num += 1
+    return alarm_list
 
 
 def queue_mapping(queue_settings):
@@ -254,24 +246,42 @@ def queue_mapping(queue_settings):
     #           email_password_out_application,
     #           email_name_to,
     """основная функция проверки очереди"""
-
     # 1) отправляем запрос "cluster-name" в API Rabbit MQ:
     responce_cluster_name = requests_api_rabbit_mq(queue_settings, "/api/cluster-name")
     # получаем имя кластера для темы сообщения:
-    email_topic = responce_cluster_name["name"]
+    email_topic = replace_symbol(responce_cluster_name["name"])
+
+    # нет связи с RabbitMQ:
+    if email_topic == "connect_error":
+        email_text = ["status_code: " + responce_cluster_name["status_code"]]
+        return "ERROR", email_text, email_text
+
+    # есть связь с RabbitMQ, но ответ status_code != 200
+    if email_topic == "error":
+        email_text = ["status_code: " + responce_cluster_name["status_code"]]
+        return "ERROR", email_text, email_text
+
+    # почтовый сервер mail.ru ругается на непонятные темы сообщений,
+    # поэтому укорачиваем тему (а на самом деле название узла)
+    # до 12 последних символов:
+    email_topic = email_topic[-12:]
 
     # 2) отправляем запрос "nodes" в API Rabbit MQ:
     responce_nodes: json = requests_api_rabbit_mq(queue_settings, "/api/nodes")
-    # подготовили текстовку технического и тревожного сообщений:
-    email_to_json_nodes = responce_mapping_nodes(responce_nodes)
-    email_alarm_list = alarm_mapping_nodes(responce_nodes)
+    # подготовили текстовку email сообщения:
+    email_text_nodes = check_mapping_nodes(responce_nodes)
 
     # 3) отправляем запрос "queues" в API Rabbit MQ:
     responce_queues: json = requests_api_rabbit_mq(queue_settings, "/api/queues")
-    # подготовили текстовку технического сообщениz:
-    email_to_json_queues = responce_mapping_queues(responce_queues)
+    # получили текстовку email для 'технического' отчёта в части 'ОЧЕРЕДИ'
+    email_tech_queues = check_mapping_queues(responce_queues)
+    # добавили ответ в текстовку 'технического' email сообщения:
+    email_tech_text = email_text_nodes + email_tech_queues
 
-    # 4) добавить текстовку тревожного сообщения:
-    email_alarm_list = alarm_mapping_queues_add(email_alarm_list, responce_queues)
+    # получили текстовку email для 'тревожного' отчёта в части 'ОЧЕРЕДИ'
+    email_alarm_queues = alarm_mapping_queues(responce_queues)
 
-    return email_topic, email_to_json_nodes, email_to_json_queues, email_alarm_list
+    # добавили ответ в текстовку 'технического' email сообщения:
+    email_alarm_text = email_text_nodes + email_alarm_queues
+
+    return email_topic, email_tech_text, email_alarm_text
