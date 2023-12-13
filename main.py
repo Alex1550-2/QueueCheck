@@ -3,6 +3,7 @@
 """
 import asyncio
 import configparser  # модуль для работы с .ini
+import logging
 import smtplib  # библиотека для отправки e-mail
 import time
 from datetime import datetime
@@ -13,16 +14,11 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 
 # импортируем настройки email оправителя / получателя отчётов:
-from Email_config.const_email import (
-    EMAIL_LOGIN,
-    EMAIL_NAME_TO,
-    EMAIL_PASSWORD_OUT_APPLICATIONS,
-    INI_QUEUE_FILE_NAME,
-    QUEUE_AMOUNT,
-    SMTP_EMAIL_SERVER,
-    email_name_alarm_list,
-)
-from logs import clean_log_file, step_logging
+from Email_config.const_email import (EMAIL_LOGIN, EMAIL_NAME_TO,
+                                      EMAIL_PASSWORD_OUT_APPLICATIONS,
+                                      INI_QUEUE_FILE_NAME, QUEUE_AMOUNT,
+                                      SMTP_EMAIL_SERVER, email_name_alarm_list)
+from logs import partial_clean_log_file
 from mapping import queue_mapping  # импортируем обработку запросов
 
 
@@ -39,7 +35,7 @@ def get_file_name() -> str:
 
 def read_ini(file_name: str, queue_number: int) -> tuple:
     """чтение конфигурационного параметра из файла set_queue.ini"""
-    section_name: str = "SET_" + str(queue_number)
+    section_name: str = f"SET_{queue_number}"
 
     conf = configparser.RawConfigParser()
     conf.read(file_name)
@@ -103,14 +99,12 @@ def queue_check():
         email_topic, email_tech_text, email_alarm_text = queue_mapping(queue_settings)
 
         # 3) заполняем тему письма
-        message_topic: str = (
-            datetime.now().strftime("%Y_%m_%d_%H_%M_%S") + ": " + email_topic
-        )
+        current_data_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        message_topic: str = f"{current_data_time}: {email_topic}"
 
         # 4) отправляем 'технический' email с результатами:
-        tech_text_big_string = ""
-        for element in email_tech_text:
-            tech_text_big_string += str(element) + "\r\n"
+        # преобразование исходного list в str с разделителями методом join:
+        tech_text_big_string = "\r\n".join(email_tech_text)
 
         send_email(
             SMTP_EMAIL_SERVER,
@@ -122,11 +116,8 @@ def queue_check():
         )
 
         # записываем в лог отчётную строку:
-        step_logging(
-            EMAIL_NAME_TO
-            + " >>> "
-            + message_topic
-            + " >>> 'технический' email отправлен"
+        logging.warning(
+            f"{EMAIL_NAME_TO} >>> {message_topic} >>> 'технический' email отправлен"
         )
 
         # 5) отправляем 'тревожные' email
@@ -137,9 +128,8 @@ def queue_check():
         # и тему email на наличие слова "ERROR":
         if len(common_words) > 0 or message_topic.find("ERROR") != -1:
             # создаём укороченный 'тревожный' email:
-            alarm_text_big_string = ""
-            for element in email_alarm_text:
-                alarm_text_big_string += str(element) + "\r\n"
+            # преобразование исходного list в str с разделителями методом join:
+            alarm_text_big_string = "\r\n".join(email_alarm_text)
 
             alarm_number = 0  # счётчик цикла: кол-во отправляемых email
             email_alarm_amount = len(email_name_alarm_list)
@@ -155,11 +145,9 @@ def queue_check():
                     message_topic,
                 )
                 # записываем в лог отчётную строку:
-                step_logging(
-                    email_name_alarm_list[alarm_number]
-                    + " >>> "
-                    + message_topic
-                    + " >>> 'тревожный' email отправлен"
+                logging.warning(
+                    f"{email_name_alarm_list[alarm_number]} >>> " \
+                    f"{message_topic} >>> 'тревожный' email отправлен"
                 )
 
                 # задержка, чтобы не забанил почтовый сервер:
@@ -182,13 +170,16 @@ def run_scheduler():
 
     # "боевой" планировщик: будни, рабочее время с 9 до 18, каждый час:
     # jitter - "дребезг" 30 секунд
-    scheduler.add_job(queue_check, "cron", day_of_week="0-4", hour="09-18/1", jitter=30)
+    # scheduler.add_job(queue_check, "cron", day_of_week="0-4", hour="09-18/1", jitter=30)
 
     # ежедневно в 23.30 часа удалить "лишние" строки из лога:
-    scheduler.add_job(clean_log_file, "cron", hour="23", minute="30", jitter=15)
+    scheduler.add_job(partial_clean_log_file, "cron", hour="23", minute="30", jitter=15)
 
     # только для тестирования:
-    # scheduler.add_job(queue_check, trigger='interval', seconds=15)
+    # scheduler.add_job(queue_check, trigger="interval", seconds=10)
+
+    # тестирование на локальном компьютере:
+    scheduler.add_job(queue_check, "cron", day_of_week="0-4", minute="00, 10, 20, 30, 40, 50")
 
     scheduler.start()
 

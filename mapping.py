@@ -5,18 +5,13 @@ import json
 import requests
 from requests.auth import HTTPBasicAuth
 
-from check_value import (
-    byte_change_gib,
-    byte_change_mebibyte,
-    calculate_amount_messages,
-    calculate_diskspace_free,
-    calculate_memory_free,
-    get_check_value,
-    replace_symbol,
-)
-
+from check_value import (byte_change_gib, byte_change_mebibyte,
+                         calculate_amount_messages, calculate_amount_queues,
+                         calculate_diskspace_free, calculate_memory_free,
+                         get_check_value, replace_symbol)
 # импортируем количественные значения проверки работоспособности:
-from Email_config.control_value import limit_value_messages, queue_control_values
+from Email_config.control_value import (limit_value_messages,
+                                        queue_control_values)
 
 
 def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
@@ -33,7 +28,7 @@ def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
     user_password: str = queue_settings[3]
 
     auth = HTTPBasicAuth(user_name, user_password)
-    url_requests = "http://" + server_ip + ":" + server_port + command
+    url_requests = f"http://{server_ip}:{server_port}{command}"
 
     try:
         # время ожидания ответа от сервера timeout=15 секунд
@@ -45,17 +40,17 @@ def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
     except requests.ConnectionError as error_text:
         return {
             "name": "connect_error",
-            "status_code": "Ошибка подключения: " + str(error_text),
+            "status_code": f"Ошибка подключения: {str(error_text)}",
         }
     except requests.Timeout as error_text:
         return {
             "name": "connect_error",
-            "status_code": "Ошибка тайм-аута: " + str(error_text),
+            "status_code": f"Ошибка тайм-аута: {str(error_text)}",
         }
     except requests.RequestException as error_text:
         return {
             "name": "connect_error",
-            "status_code": "Ошибка запроса: " + str(error_text),
+            "status_code": f"Ошибка запроса: {str(error_text)}",
         }
 
 
@@ -68,8 +63,7 @@ def responce_mapping_nodes(responce: json) -> json:
         # формируем отчётный json:
         dict_responce.update(
             {
-                "nodes_"
-                + str(num + 1): {
+                f"nodes_{str(num+1)}": {
                     "name": replace_symbol(responce[num]["name"]),
                     "file descriptors": responce[num]["fd_used"],
                     "file descriptors available": responce[num]["fd_total"],
@@ -158,8 +152,7 @@ def responce_mapping_queues(responce: json) -> json:
         # формируем отчётный json:
         dict_responce.update(
             {
-                "queue_"
-                + str(num + 1): {
+                f"queue_{str(num + 1)}": {
                     "virtual host": responce[num]["vhost"],
                     "name": responce[num]["name"],
                     "messages_ready": responce[num]["messages_ready"],
@@ -179,10 +172,23 @@ def responce_mapping_queues(responce: json) -> json:
 def check_mapping_queues(responce: json) -> list:
     """добавляем результат проверки очередей по текущему количеству сообщений
     на выходе текстовка email для 'технического' отчёта в части 'ОЧЕРЕДИ'"""
+    queue_amount: int = len(responce)
+
     tech_list: list = ["===============================", "QUEUES:", ""]
     num = 0
 
-    while num < len(responce):  # 108, по кол-ву очередей
+    check_q_result = calculate_amount_queues(queue_amount, queue_control_values[2])
+    tech_list.append(
+        "queue amount: "
+        + str(queue_amount)
+        + " >>> check limit "
+        + str(queue_control_values[2])
+        + " >>> Test: "
+        + check_q_result
+    )
+    tech_list.append("")
+
+    while num < queue_amount:  # 108, по кол-ву очередей
         # определяем пороговое значение:
         limit_value = get_check_value(limit_value_messages, responce[num]["name"])
         check_result = calculate_amount_messages(responce[num]["messages"], limit_value)
@@ -207,37 +213,18 @@ def check_mapping_queues(responce: json) -> list:
     return tech_list
 
 
-def alarm_mapping_queues(responce: json) -> list:
-    """добавляем результат проверки очередей по текущему количеству сообщений
-    на выходе текстовка email для 'тревожного' отчёта
-    включаем в отчёт только очереди с ALARM"""
-    alarm_list: list = ["===============================", "QUEUES:", ""]
-    num = 0
+def alarm_mapping_queues(tech_list: list) -> list:
+    # копируем верхнюю часть отчёта:
+    alarm_list = tech_list[0:4]
+    alarm_list.append("")
 
-    while num < len(responce):  # 108, по кол-ву очередей
-        # определяем пороговое значение:
-        limit_value = get_check_value(limit_value_messages, responce[num]["name"])
-        check_result = calculate_amount_messages(responce[num]["messages"], limit_value)
-
-        # в отчёт добавляем только 'тревожную' строку:
-        if check_result == "ALARM!":
-            # формируем отчётный list:
-            alarm_list.append(
-                responce[num]["vhost"]
-                + ": "
-                + responce[num]["name"]
-                + " >>> messages: ready "
-                + str(responce[num]["messages_ready"])
-                + " / unacked "
-                + str(responce[num]["messages_unacknowledged"])
-                + " / total "
-                + str(responce[num]["messages"])
-                + " >>> check limit "
-                + str(limit_value)
-                + " >>> Test: "
-                + check_result
-            )
+    # в отчёт добавляем только 'тревожную' строку:
+    num = 4
+    while num < len(tech_list):
+        if "ALARM!" in tech_list[num]:
+            alarm_list.append(tech_list[num])
         num += 1
+
     return alarm_list
 
 
@@ -279,7 +266,7 @@ def queue_mapping(queue_settings):
     email_tech_text = email_text_nodes + email_tech_queues
 
     # получили текстовку email для 'тревожного' отчёта в части 'ОЧЕРЕДИ'
-    email_alarm_queues = alarm_mapping_queues(responce_queues)
+    email_alarm_queues = alarm_mapping_queues(email_tech_queues)
 
     # добавили ответ в текстовку 'технического' email сообщения:
     email_alarm_text = email_text_nodes + email_alarm_queues

@@ -1,49 +1,35 @@
 """Функци для логирования"""
-import datetime
+import logging
 
-LOG_FILE_NAME = "Logs/log_file.txt"
-LOG_FILE_MAX_STRING = 100  # макс кол-во строк в логе
+LOG_FILE_NAME = "Logs/log.log"
+LOG_FILE_MAX_STRING = 110  # макс кол-во строк в логе
 
-
-def step_logging(new_logs_line: str):
-    """Логирование шедулеров:
-    записываем в лог новую строку вида
-    дата/время >>> идентификатор шедулера"""
-    now = datetime.datetime.now()  # команда now - текущее дата/время
-    new_logs_line = now.strftime("%Y:%m:%d %H:%M:%S") + " >>> " + new_logs_line
-
-    try:
-        # Открытие файла в режиме дозаписи:
-        log_txt = open(LOG_FILE_NAME, "a", encoding="utf-8")
-    except FileNotFoundError:
-        # Обработка ошибки, возникающей в том случае, если файл не найден
-        log_txt = open(LOG_FILE_NAME, "w", encoding="utf-8")
-    else:
-        # После успешного открытия, записываем строку в лог
-        log_txt.write(new_logs_line + "\n")
-        log_txt.close()
+# уровень штатного логирования поднял до WARNING, чтобы INFO не засоряло лог-файл,
+# поэтому пришлось поднимать уровень своих информационных сообщений до WARNING
+# пример: logging.warning(f"очистка лог-файла {LOG_FILE_NAME} выполнена")
+logging.basicConfig(level=logging.WARNING, filename=LOG_FILE_NAME, filemode="a",
+                    format="%(asctime)s %(levelname)s %(message)s")
 
 
-def partial_clean_log_file(log_file_name, string_amount: int):
-    """чтобы лог не был слишком большой,
-    оставляем последние string_amount строчек"""
-
-    # считываем текущий лог и укорачиваем его:
+def get_log(log_file_name: str) -> list:
+    """ получаем list с содержимым лог-файла"""
     with open(log_file_name, "r", encoding="utf-8") as log_file:
         log_text = log_file.readlines()
-        log_text = log_text[string_amount:]
 
-    # перезаписываем лог-файл:
+    return log_text
+
+
+def write_log(log_file_name: str, log_text: list):
+    """ укорачиваем и записываем лог обратно в файл """
+    log_text = log_text[-LOG_FILE_MAX_STRING:]
+
     with open(log_file_name, "w", encoding="utf-8") as log_file:
         log_file.writelines(log_text)
 
 
-def clean_log_file():
-    """основная функция удаления 'лишних' файлов,
-    которую запускаем через scheduler"""
-
-    # укорачиваем лог-файл:
-    partial_clean_log_file(LOG_FILE_NAME, LOG_FILE_MAX_STRING)
-
-    # записываем в лог отчётную строку:
-    step_logging("'лишние' отчётные файлы удалены")
+def partial_clean_log_file():
+    """чтобы лог не был слишком большой,
+    оставляем последние string_amount строчек"""
+    log_text = get_log(LOG_FILE_NAME)
+    write_log(LOG_FILE_NAME, log_text)
+    logging.warning(f"очистка лог-файла {LOG_FILE_NAME} выполнена")

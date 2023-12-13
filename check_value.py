@@ -55,6 +55,17 @@ def calculate_diskspace_free(free_diskspace: str, limit_diskspace: int) -> str:
     return "ALARM!"
 
 
+def calculate_amount_queues(queue_amount: int, limit_queue_amount: int) -> str:
+    """функция сравнивает текущее количество
+    очередей и пороговое значение limit
+
+    ДУБЛИРУЕТ функцию calculate_amount_messages,
+    специально сделал отдельно под будущее усложнение"""
+    if queue_amount < limit_queue_amount:
+        return "OK"
+    return "ALARM!"
+
+
 def calculate_amount_messages(message_amount: int, limit_message_amount: int) -> str:
     """функция сравнивает текущее количество message
     в очереди и пороговое значение limit"""
