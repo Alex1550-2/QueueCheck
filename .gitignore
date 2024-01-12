@@ -1,2 +1,3 @@
+__pycache__/
 Email_config/
-Logs/*.txt
+Logs/

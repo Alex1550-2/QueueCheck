@@ -21,13 +21,13 @@ def get_check_value(dict_name, dict_kay: str) -> int:
 
 def byte_change_gib(byte: str) -> str:
     """функция преобразования Байт в Гибибайт (GiB)"""
-    gib: int = int(round(int(byte) / (1024**3), 2))
+    gib: float = round(int(byte) / (1024**3), 2)
     return str(gib)
 
 
 def byte_change_mebibyte(byte: str) -> str:
     """функция преобразования Байт в Мебибайт (MiB)"""
-    mib: int = int(round(int(byte) / (1024**2), 2))
+    mib: float = round(int(byte) / (1024**2), 2)
     return str(mib)
 
 
