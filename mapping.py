@@ -5,15 +5,25 @@ import json
 import requests
 from requests.auth import HTTPBasicAuth
 
-from check_value import (byte_change_gib, calculate_amount_messages,
-                         calculate_amount_queues, calculate_diskspace_free,
-                         calculate_memory_free, get_check_value, replace_symbol)
+from check_value import (
+    byte_change_gib,
+    calculate_amount_messages,
+    calculate_amount_queues,
+    calculate_diskspace_free,
+    calculate_memory_free,
+    get_check_value,
+    replace_symbol,
+)
+
 # импортируем количественные значения проверки работоспособности:
-from Email_config.control_value import (limit_value_messages,
-                                        queue_control_values)
+from Email_config.control_value import (
+    limit_value_free_disk_space,
+    limit_value_messages,
+    queue_control_values,
+)
+
 # импортируем список очередей для сохранения параметров:
-from save_some_queues import (check_queue_inside_list,
-                              add_new_value)
+from save_some_queues import add_new_value, check_queue_inside_list
 
 
 def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
@@ -60,8 +70,7 @@ def check_mapping_nodes(responce: json) -> list:
     """проверяем узлы по количественным характеристикам
     из списка limit_value_messages
     на выходе текстовка для email в части 'УЗЛЫ'"""
-    nodes_list: list = ["NODES:"]
-    nodes_list.append("")  # разделитель
+    nodes_list: list = ["NODES:", ""]
 
     for node in responce:  # 3, по кол-ву узлов
         # формируем отчётный list:
@@ -71,12 +80,14 @@ def check_mapping_nodes(responce: json) -> list:
         if node["running"] is False:
             nodes_list.append("Node not running >>> ERROR!")
         else:
+            # проверяем оперативную(?) память:
             memory_percent, memory_result = calculate_memory_free(
                 byte_change_gib(node["mem_used"]),
                 byte_change_gib(node["mem_limit"]),
                 queue_control_values[0],
             )
 
+            # и формируем отчётную строку:
             nodes_list.append(
                 "used "
                 + byte_change_gib(node["mem_used"])
@@ -88,15 +99,19 @@ def check_mapping_nodes(responce: json) -> list:
                 + memory_result
             )
 
+            # проверяем свободное место жёсткого диска:
+            # определяем пороговое значение:
+            limit_value = get_check_value(limit_value_free_disk_space, node["name"])
             check_result = calculate_diskspace_free(
-                byte_change_gib(node["disk_free"]), queue_control_values[1]
+                byte_change_gib(node["disk_free"]), limit_value
             )
 
+            # и формируем отчётную строку:
             nodes_list.append(
                 "disk space "
                 + byte_change_gib(node["disk_free"])
                 + " GiB / check limit "
-                + str(queue_control_values[1])
+                + str(limit_value)
                 + " GiB >>> Test: "
                 + check_result
             )
@@ -113,18 +128,18 @@ def check_mapping_queues(responce: json) -> list:
 
     tech_list: list = ["===============================", "QUEUES:", ""]
 
-    check_q_result = calculate_amount_queues(queue_amount, queue_control_values[2])
+    check_q_result = calculate_amount_queues(queue_amount, queue_control_values[1])
     tech_list.append(
         "queue amount: "
         + str(queue_amount)
         + " >>> check limit "
-        + str(queue_control_values[2])
+        + str(queue_control_values[1])
         + " >>> Test: "
         + check_q_result
     )
     tech_list.append("")
 
-    for queue in responce:   # для каждой очереди queue в ответе responce
+    for queue in responce:  # для каждой очереди queue в ответе responce
         # определяем пороговое значение:
         limit_value = get_check_value(limit_value_messages, queue["name"])
         check_result = calculate_amount_messages(queue["messages"], limit_value)
@@ -163,7 +178,7 @@ def alarm_mapping_queues(tech_list: list) -> list:
 
     for tech_item in tech_list[5:]:
         if "ALARM!" in tech_item:
-             alarm_list.append(tech_item)
+            alarm_list.append(tech_item)
 
     return alarm_list
 

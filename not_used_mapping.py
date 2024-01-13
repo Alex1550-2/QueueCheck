@@ -1,8 +1,8 @@
 """ устаревшие функции """
 
 import json
-from check_value import (byte_change_gib, replace_symbol,
-                         byte_change_mebibyte)
+
+from check_value import byte_change_gib, byte_change_mebibyte, replace_symbol
 
 
 def responce_mapping_nodes(responce: json) -> json:

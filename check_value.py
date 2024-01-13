@@ -9,14 +9,14 @@ def replace_symbol(string: str) -> str:
     return string
 
 
-def get_check_value(dict_name, dict_kay: str) -> int:
+def get_check_value(dict_name, dict_kay: str) -> float:
     """получаем количественный показатель для оценки
     корректности работы очереди
     limit_value - количество сообщений (queue message total)"""
     if dict_kay in dict_name:
-        return int(dict_name[dict_kay])
+        return float(dict_name[dict_kay])
 
-    return int(dict_name["REST"])
+    return float(dict_name["REST"])
 
 
 def byte_change_gib(byte: str) -> str:
@@ -47,7 +47,7 @@ def calculate_memory_free(used_memory: str, total_memory: str, limit_ratio: floa
     return current_ratio, check_result
 
 
-def calculate_diskspace_free(free_diskspace: str, limit_diskspace: int) -> str:
+def calculate_diskspace_free(free_diskspace: str, limit_diskspace: float) -> str:
     """функция сравнивает свободный объём диска и
     пороговое значение limit"""
     if float(free_diskspace) > float(limit_diskspace):
@@ -66,9 +66,9 @@ def calculate_amount_queues(queue_amount: int, limit_queue_amount: int) -> str:
     return "ALARM!"
 
 
-def calculate_amount_messages(message_amount: int, limit_message_amount: int) -> str:
+def calculate_amount_messages(message_amount: int, limit_message_amount: float) -> str:
     """функция сравнивает текущее количество message
     в очереди и пороговое значение limit"""
-    if message_amount < limit_message_amount:
+    if message_amount < int(limit_message_amount):
         return "OK"
     return "ALARM!"

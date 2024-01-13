@@ -8,7 +8,6 @@ from pathlib import Path
 
 from check_value import replace_symbol
 
-
 # список очередей, текущие значения Mesages которых
 # сохраняем в соответствующем текстовом файле
 save_some_queues_list = {
@@ -27,10 +26,10 @@ save_some_queues_list = {
 
 
 def check_queue_inside_list(queue_name: str) -> bool:
+    """проверяем список очередей"""
     if queue_name in save_some_queues_list:
         return True
-    else:
-        return False
+    return False
 
 
 def add_new_value(new_value: str, queue_name: str):
@@ -50,28 +49,20 @@ def add_new_value(new_value: str, queue_name: str):
             try:
                 file.writelines(f"{added_data}\n")
             except OSError:
-                logging.warning(
-                    f"{added_data} : Ошибка записи в файл!"
-                )
+                logging.warning("%s : Ошибка записи в файл!", added_data)
     except OSError:  # OSError - файл не найден или диск полон
-        logging.warning(
-            f"{added_data} : Файл не найден!"
-        )
+        logging.warning("%s : Файл не найден!", added_data)
 
 
 def delete_files(dir_name: str):
-    """Функция удаляет все файлы .txt из вспомогательных папок проекта:
-    """
+    """Функция удаляет все файлы .txt из вспомогательных папок проекта:"""
     # dir_name = "Logs/"
-    try:
-        for file in os.listdir(dir_name):
-            if file.endswith(".txt"):   # фильтр по расширению
+    for file in os.listdir(dir_name):
+        if file.endswith(".txt"):  # фильтр по расширению
+            try:
                 os.remove(dir_name + file)
-    except:
-        logging.warning(
-            f"{file} : Файл не найден!"
-        )
-
+            except FileNotFoundError:
+                logging.warning("%s : Файл не найден!", file)
 
 
 if __name__ == "__main__":
