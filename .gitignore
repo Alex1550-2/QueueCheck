@@ -1,2 +1,4 @@
+__pycache__/
+.idea/
 Email_config/
-Logs/*.txt
+Logs/

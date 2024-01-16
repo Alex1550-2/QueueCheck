@@ -1,185 +1,123 @@
 """скрипт для контроля работоспособности очередей
 выполняет запросы в веб-панель управления очередями RabbitMQ
 """
+import argparse
 import asyncio
-import configparser  # модуль для работы с .ini
 import logging
-import smtplib  # библиотека для отправки e-mail
-import time
-from datetime import datetime
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# импортируем настройки email оправителя / получателя отчётов:
-from Email_config.const_email import (EMAIL_LOGIN, EMAIL_NAME_TO,
-                                      EMAIL_PASSWORD_OUT_APPLICATIONS,
-                                      INI_QUEUE_FILE_NAME, QUEUE_AMOUNT,
-                                      SMTP_EMAIL_SERVER, email_name_alarm_list)
 from logs import partial_clean_log_file
-from mapping import queue_mapping  # импортируем обработку запросов
+from queue_cheking import queue_check  # импортируем проверку очередей
+
+# выбор типа планирвщика: работа в фоновом режиме внутри приложения
+scheduler = BackgroundScheduler()
 
 
-def get_file_name() -> str:
-    """Определяем абсолютные пути текстовых файлов проекта"""
-    # {WindowsPath} C:\Users\user\PycharmProjects\Lesson_01
-    project_directory = Path(__file__).resolve(strict=True).parent
+# определяем аргументы скрипта при использовании анализатора argparse:
+parser = argparse.ArgumentParser(description="Script: system performance check")
+parser.add_argument(
+    "infranumber",
+    type=int,
+    help="The number of the data set (ip/login) from set_queue.ini",
+)
+parser.add_argument(
+    "techreport",
+    type=str,
+    help="Send technical report in options: 'yes'"
+)
+parser.add_argument(
+    "mode",
+    type=str,
+    help="Scheduler launch mode: 'test', 'local', 'live'",
+)
+args = parser.parse_args()
 
-    # str "C:\\Users\\user\\PycharmProjects\\Lesson_01\\Email_config\\set_queue.ini"
-    file_name_queue_set_ini = str(project_directory / INI_QUEUE_FILE_NAME)
 
-    return file_name_queue_set_ini
+def get_infra_numbers(general_number: int) -> list[int]:
+    """из аргумента формируем list с номерами наборов
+    параметров доступа к проверяемым инфраструктурам
+    SET_x из set_queue.ini
+    """
+    result_list: list[int] = []
+    while general_number > 0:
+        result_list.append(general_number % 10)  # остаток
+        general_number //= 10  # целочисленное деление
+
+    result_list.reverse()
+
+    return result_list
 
 
-def read_ini(file_name: str, queue_number: int) -> tuple:
-    """чтение конфигурационного параметра из файла set_queue.ini"""
-    section_name: str = f"SET_{queue_number}"
-
-    conf = configparser.RawConfigParser()
-    conf.read(file_name)
-
-    result = (
-        conf.get(section_name, "SERVER_IP"),
-        conf.get(section_name, "SERVER_PORT"),
-        conf.get(section_name, "USER_NAME"),
-        conf.get(section_name, "USER_PASSWORD"),
+def test_scheduler(infra_numbers: list[int], techreport: str):
+    """быстрое тестирование - интервал проверки 10 секунд"""
+    scheduler.add_job(
+        queue_check,
+        trigger="interval",
+        seconds=10,
+        kwargs={
+            "infra_numbers": infra_numbers,
+            "techreport": techreport,
+        },
     )
-    return result  # нумерация с нуля!
 
 
-def send_email(
-    smtp_email_server,
-    email_login,
-    email_password_out_application,
-    email_name_to,
-    message_text,
-    message_topic,
-):  # pylint: disable=too-many-arguments
-    """функция отправки email, библиотека smtplib"""
-
-    # настройка url:port SMTP сервера
-    smtp_server = smtplib.SMTP_SSL(smtp_email_server)
-
-    # настройка параметров входа в email рассылки (from)
-    smtp_server.login(email_login, email_password_out_application)
-
-    message = MIMEMultipart()  # create a message
-
-    # настраиваем параметры сообщения:
-    message["From"] = email_login
-    message["To"] = email_name_to
-    message["Subject"] = message_topic
-
-    # добавляем текст сообщения:
-    message.attach(MIMEText(message_text, "plain"))
-
-    # отправляем сообщение
-    smtp_server.send_message(message)
-    del message
-
-    # удаляем SMTP сессию и закрываем соединение
-    smtp_server.quit()
+def local_scheduler(infra_numbers: list[int], techreport: str):
+    """тестирование на локальной машине - интервал проверки 15 минут"""
+    scheduler.add_job(
+        queue_check,
+        "cron",
+        minute="00, 15, 30, 45",
+        kwargs={
+            "infra_numbers": infra_numbers,
+            "techreport": techreport,
+        },
+    )
 
 
-def queue_check():
-    #           smtp_email_server, email_login,
-    #           email_password_out_application,
-    #           email_name_to,
-    """основная функция проверки очереди"""
-    queue_number: int = 1  # счётчик цикла: кол-во проверяемых инфраструктур
+def live_scheduler(infra_numbers: list[int], techreport: str):
+    """'боевой' планировщик: будни, рабочее время с 9 до 18,
+    интервал проверки - 1 час, jitter - "дребезг" 30 секунд"""
+    scheduler.add_job(
+        queue_check,
+        "cron",
+        day_of_week="0-4",
+        hour="09-18/1",
+        jitter=30,
+        kwargs={
+            "infra_numbers": infra_numbers,
+            "techreport": techreport,
+        },
+    )
 
-    while queue_number <= QUEUE_AMOUNT:
-        # 1) получили настройки очереди из ini-файла:
-        file_name_set_ini = get_file_name()
-        queue_settings: tuple = read_ini(file_name_set_ini, queue_number)
 
-        # 2) запустили проверку i-ой инфраструктуры:
-        email_topic, email_tech_text, email_alarm_text = queue_mapping(queue_settings)
-
-        # 3) заполняем тему письма
-        current_data_time = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-        message_topic: str = f"{current_data_time}: {email_topic}"
-
-        # 4) отправляем 'технический' email с результатами:
-        # преобразование исходного list в str с разделителями методом join:
-        tech_text_big_string = "\r\n".join(email_tech_text)
-
-        send_email(
-            SMTP_EMAIL_SERVER,
-            EMAIL_LOGIN,
-            EMAIL_PASSWORD_OUT_APPLICATIONS,
-            EMAIL_NAME_TO,
-            tech_text_big_string,
-            message_topic,
-        )
-
-        # записываем в лог отчётную строку:
-        logging.warning(
-            f"{EMAIL_NAME_TO} >>> {message_topic} >>> 'технический' email отправлен"
-        )
-
-        # 5) отправляем 'тревожные' email
-        # проверяем текстовку на наличие слова "ALARM!":
-        checklist = {"ALARM!"}
-        common_words = set(tech_text_big_string.split()) & checklist
-
-        # и тему email на наличие слова "ERROR":
-        if len(common_words) > 0 or message_topic.find("ERROR") != -1:
-            # создаём укороченный 'тревожный' email:
-            # преобразование исходного list в str с разделителями методом join:
-            alarm_text_big_string = "\r\n".join(email_alarm_text)
-
-            alarm_number = 0  # счётчик цикла: кол-во отправляемых email
-            email_alarm_amount = len(email_name_alarm_list)
-
-            while alarm_number < email_alarm_amount:
-
-                send_email(
-                    SMTP_EMAIL_SERVER,
-                    EMAIL_LOGIN,
-                    EMAIL_PASSWORD_OUT_APPLICATIONS,
-                    email_name_alarm_list[alarm_number],
-                    alarm_text_big_string,
-                    message_topic,
-                )
-                # записываем в лог отчётную строку:
-                logging.warning(
-                    f"{email_name_alarm_list[alarm_number]} >>> " \
-                    f"{message_topic} >>> 'тревожный' email отправлен"
-                )
-
-                # задержка, чтобы не забанил почтовый сервер:
-                time.sleep(3)
-
-                alarm_number += 1
-
-        queue_number += 1
-
-        # задержка, чтобы не забанил почтовый сервер:
-        time.sleep(3)
-
-    # только для тестирования:
-    # print("for test: cycle complete")
+def default():
+    """ошибка выбора режима"""
+    logging.warning(" >>> mode switch ERROR!")
 
 
 def run_scheduler():
-    """планировщик заданий"""
-    scheduler = BackgroundScheduler()
+    """планировщик заданий перенесён на 27 строку"""
+    # scheduler = BackgroundScheduler()
 
-    # "боевой" планировщик: будни, рабочее время с 9 до 18, каждый час:
-    # jitter - "дребезг" 30 секунд
-    # scheduler.add_job(queue_check, "cron", day_of_week="0-4", hour="09-18/1", jitter=30)
+    # из аргумента формируем list с номерами наборов
+    # параметров доступа к проверяемым инфраструктурам
+    # SET_x из set_queue.ini
+    infra_numbers = get_infra_numbers(args.infranumber)
 
+    # выбор соответствующего scheduler для последующего запуска:
+    if args.mode == "test":
+        test_scheduler(infra_numbers, args.techreport)
+    elif args.mode == "local":
+        local_scheduler(infra_numbers, args.techreport)
+    elif args.mode == "live":
+        live_scheduler(infra_numbers, args.techreport)
+    else:
+        default()
+
+    # этот шедулер выполняем при любом аргументе mode
     # ежедневно в 23.30 часа удалить "лишние" строки из лога:
     scheduler.add_job(partial_clean_log_file, "cron", hour="23", minute="30", jitter=15)
-
-    # только для тестирования:
-    # scheduler.add_job(queue_check, trigger="interval", seconds=10)
-
-    # тестирование на локальном компьютере:
-    scheduler.add_job(queue_check, "cron", day_of_week="0-4", minute="00, 10, 20, 30, 40, 50")
 
     scheduler.start()
 
