@@ -66,13 +66,13 @@ def requests_api_rabbit_mq(queue_settings: tuple, command: str) -> json:
         }
 
 
-def check_mapping_nodes(responce: json) -> list:
+def check_mapping_nodes(response: json) -> list:
     """проверяем узлы по количественным характеристикам
     из списка limit_value_messages
     на выходе текстовка для email в части 'УЗЛЫ'"""
     nodes_list: list = ["NODES:", ""]
 
-    for node in responce:  # 3, по кол-ву узлов
+    for node in response:  # 3, по кол-ву узлов
         # формируем отчётный list:
         nodes_list.append(replace_symbol(node["name"]))
 
@@ -121,10 +121,10 @@ def check_mapping_nodes(responce: json) -> list:
     return nodes_list
 
 
-def check_mapping_queues(responce: json) -> list:
+def check_mapping_queues(response: json) -> list:
     """добавляем результат проверки очередей по текущему количеству сообщений
     на выходе текстовка email для 'технического' отчёта в части 'ОЧЕРЕДИ'"""
-    queue_amount: int = len(responce)
+    queue_amount: int = len(response)
 
     tech_list: list = ["===============================", "QUEUES:", ""]
 
@@ -139,7 +139,7 @@ def check_mapping_queues(responce: json) -> list:
     )
     tech_list.append("")
 
-    for queue in responce:  # для каждой очереди queue в ответе responce
+    for queue in response:  # для каждой очереди queue в ответе response
         # определяем пороговое значение:
         limit_value = get_check_value(limit_value_messages, queue["name"])
         check_result = calculate_amount_messages(queue["messages"], limit_value)
@@ -189,18 +189,18 @@ def queue_mapping(queue_settings):
     #           email_name_to,
     """основная функция проверки очереди"""
     # 1) отправляем запрос "cluster-name" в API Rabbit MQ:
-    responce_cluster_name = requests_api_rabbit_mq(queue_settings, "/api/cluster-name")
+    response_cluster_name = requests_api_rabbit_mq(queue_settings, "/api/cluster-name")
     # получаем имя кластера для темы сообщения:
-    email_topic = replace_symbol(responce_cluster_name["name"])
+    email_topic = replace_symbol(response_cluster_name["name"])
 
     # нет связи с RabbitMQ:
     if email_topic == "connect_error":
-        email_text = ["status_code: " + responce_cluster_name["status_code"]]
+        email_text = ["status_code: " + response_cluster_name["status_code"]]
         return "ERROR", email_text, email_text
 
     # есть связь с RabbitMQ, но ответ status_code != 200
     if email_topic == "error":
-        email_text = ["status_code: " + responce_cluster_name["status_code"]]
+        email_text = ["status_code: " + response_cluster_name["status_code"]]
         return "ERROR", email_text, email_text
 
     # почтовый сервер mail.ru ругается на непонятные темы сообщений,
@@ -209,14 +209,14 @@ def queue_mapping(queue_settings):
     email_topic = email_topic[-12:]
 
     # 2) отправляем запрос "nodes" в API Rabbit MQ:
-    responce_nodes: json = requests_api_rabbit_mq(queue_settings, "/api/nodes")
+    response_nodes: json = requests_api_rabbit_mq(queue_settings, "/api/nodes")
     # подготовили текстовку email сообщения:
-    email_text_nodes = check_mapping_nodes(responce_nodes)
+    email_text_nodes = check_mapping_nodes(response_nodes)
 
     # 3) отправляем запрос "queues" в API Rabbit MQ:
-    responce_queues: json = requests_api_rabbit_mq(queue_settings, "/api/queues")
+    response_queues: json = requests_api_rabbit_mq(queue_settings, "/api/queues")
     # получили текстовку email для 'технического' отчёта в части 'ОЧЕРЕДИ'
-    email_tech_queues = check_mapping_queues(responce_queues)
+    email_tech_queues = check_mapping_queues(response_queues)
     # добавили ответ в текстовку 'технического' email сообщения:
     email_tech_text = email_text_nodes + email_tech_queues
 
